@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 
 type Director = {
   id?: number;
@@ -48,9 +48,16 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [adminFilter, setAdminFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [loginOpen, setLoginOpen] = useState(false);
-  const [detailsRecord, setDetailsRecord] = useState<Organization | null>(null);
   const [formRecord, setFormRecord] = useState<Organization | 'new' | null>(null);
   const [directors, setDirectors] = useState<Director[]>([]);
+  const [notification, setNotification] = useState('');
+  const notificationTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  function notify(message: string) {
+    setNotification(message);
+    clearTimeout(notificationTimer.current);
+    notificationTimer.current = setTimeout(() => setNotification(''), 4000);
+  }
 
   async function load() {
     setError('');
@@ -78,8 +85,11 @@ export default function App() {
 
   const visibleRows = useMemo(() => organizations.filter((organization) => {
     const text = `${organization.name} ${organization.directors.map((director) => director.name).join(' ')}`.toLocaleLowerCase('es');
-    return text.includes(search.toLocaleLowerCase('es')) && (!isAdmin || adminFilter === 'all' || organization.status === adminFilter);
+    return text.includes(search.toLocaleLowerCase('es')) && (adminFilter === 'all' || organization.status === adminFilter);
   }), [organizations, search, isAdmin, adminFilter]);
+  const totalOrganizations = isAdmin
+    ? organizations.filter((organization) => organization.status === 'active').length + organizations.filter((organization) => organization.status === 'inactive').length
+    : organizations.length;
 
   function openEditor(record: Organization | 'new') {
     setError('');
@@ -130,6 +140,7 @@ export default function App() {
       await request(formRecord === 'new' ? '/organizations' : `/organizations/${formRecord.id}`, {
         method: formRecord === 'new' ? 'POST' : 'PUT', body: JSON.stringify(data),
       });
+      notify(formRecord === 'new' ? 'Organización creada correctamente.' : 'Cambios guardados correctamente.');
       setFormRecord(null);
       await load();
     } catch (e) {
@@ -141,6 +152,7 @@ export default function App() {
     if (!window.confirm(`¿Eliminar “${organization.name}”? Esta acción no se puede deshacer.`)) return;
     try {
       await request(`/organizations/${organization.id}`, { method: 'DELETE' });
+      notify(`“${organization.name}” fue eliminada.`);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo eliminar la organización.');
@@ -149,39 +161,47 @@ export default function App() {
 
   return (
     <div className="app-shell" data-ui>
+      {notification && <div className="success-notice" role="status">{notification}</div>}
       <header className="topbar">
         <a className="brand" href="/" aria-label="Oficina Municipal de la Juventud, inicio">
-          <img className="brand-logo" src="/omjd-logo.png" alt="Logo de la Oficina Municipal de la Juventud" />
-          <span className="brand-copy"><strong>Oficina Municipal de la Juventud</strong><small>Municipalidad de Caldera</small></span>
+          <span className="brand-logo-wrap">
+            <img className="brand-logo" src="/omjd-logo.png" alt="Logo de la Oficina Municipal de la Juventud" />
+            <img className="brand-logo-white" src="/omjd-logo.png" alt="" aria-hidden="true" />
+          </span>
+          <span className="brand-copy"><strong>REGISTRO COMUNAL</strong><small>Organizaciones juveniles · Caldera</small></span>
         </a>
-        <div className="topbar-actions">
-          {isAdmin ? <><span className="session-label">Sesión: {username}</span><button className="quiet-button" onClick={logout}>Cerrar sesión</button></>
-            : <button className="quiet-button" onClick={() => { setError(''); setLoginOpen(true); }}>Acceso administrador</button>}
-        </div>
       </header>
 
       <main className="main-content">
         <div className="title-row">
           <div>
             <h1>REGISTRO COMUNAL DE ORGANIZACIONES JUVENILES</h1>
-            <p className="lead">{isAdmin ? 'Gestiona el registro y los antecedentes de cada organización.' : 'Organizaciones juveniles activas de la comuna de Caldera.'}</p>
           </div>
-          {isAdmin && <button className="primary-button" onClick={() => openEditor('new')}><span aria-hidden="true">＋</span> Nueva organización</button>}
+          <div className="title-actions">
+            {isAdmin && <span className="session-label">Sesión: {username}</span>}
+            {isAdmin ? <><button className="primary-button" onClick={() => openEditor('new')}><span aria-hidden="true">＋</span> Nueva organización</button><button className="quiet-button admin-access" onClick={logout}>Cerrar sesión</button></>
+              : <button className="quiet-button admin-access" onClick={() => { setError(''); setLoginOpen(true); }}>Acceso administrador</button>}
+          </div>
         </div>
+
+        {!loading && !error && <div className="overview-stats" aria-label="Resumen del directorio">
+          <div><span>Total de organizaciones juveniles</span><strong>{totalOrganizations}</strong></div>
+          <div><span>Total de organizaciones activas</span><strong>{organizations.filter((organization) => organization.status === 'active').length}</strong></div>
+          <div><span>Comuna</span><strong>Caldera</strong></div>
+        </div>}
 
         <section className="directory-section" aria-labelledby="directory-title">
           <div className="section-heading">
-            <div><h2 id="directory-title">{isAdmin ? 'Listado de organizaciones' : 'Organizaciones registradas'}</h2>
-              <p>{isAdmin ? 'Los antecedentes personales solo son visibles en esta sesión.' : 'Directiva y correo de contacto de cada organización.'}</p></div>
-            <div className="count"><strong>{organizations.length}</strong><span>{isAdmin ? 'en registro' : 'organizaciones'}</span></div>
+            <div><h2 id="directory-title">Organizaciones registradas</h2>
+              <p>{isAdmin ? 'Los antecedentes personales solo son visibles en esta sesión.' : 'Nombre de la organización, directorio, correo electrónico.'}</p></div>
           </div>
 
           <div className="list-controls">
-            {isAdmin && <div className="tabs" role="group" aria-label="Filtrar por estado">
+            <div className="tabs" role="group" aria-label="Filtrar por estado">
               {(['all', 'active', 'inactive'] as const).map((filter) => <button key={filter} className={adminFilter === filter ? 'tab selected' : 'tab'} onClick={() => setAdminFilter(filter)}>
                 {filter === 'all' ? 'Todas' : filter === 'active' ? 'Activas' : 'Inactivas'}
               </button>)}
-            </div>}
+            </div>
             <label className="search-box"><span aria-hidden="true" className="search-icon"><svg viewBox="0 0 20 20" focusable="false"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" /></svg></span><span className="sr-only">Buscar organizaciones</span>
               <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar organización o integrante" />
               {search && <button type="button" aria-label="Limpiar búsqueda" onClick={() => setSearch('')}>×</button>}
@@ -192,49 +212,49 @@ export default function App() {
           {loading ? <p className="empty-state">Cargando organizaciones…</p> : visibleRows.length === 0 ?
             <div className="empty-state"><strong>{search ? 'No hay coincidencias.' : isAdmin && adminFilter !== 'all' ? 'No hay organizaciones en este estado.' : 'Aún no hay organizaciones registradas.'}</strong>
               <span>{isAdmin && !search ? 'Agrega una organización para comenzar el registro.' : 'Prueba con otro nombre o término de búsqueda.'}</span></div> :
-            <div className="organization-table-wrap" role="region" aria-label="Listado de organizaciones" tabIndex={0}>
-              <table className={isAdmin ? 'organization-table admin-table' : 'organization-table public-table'}>
-                <caption className="sr-only">Organizaciones y sus directivas</caption>
-                <thead><tr><th scope="col">Organización</th><th scope="col">Directiva</th>
-                  {isAdmin && <><th scope="col">Vigencia</th><th scope="col">Estado</th><th scope="col">Acciones</th></>}
-                </tr></thead>
-                <tbody>{visibleRows.map((organization) => {
-                  const shownDirectors = isAdmin ? organization.directors : organization.directors.filter((director) => roleOptions.slice(0, 3).includes(director.role));
-                  return <tr key={organization.id}>
-                    <th scope="row" className="organization-name-cell"><strong>{organization.name}</strong>
+            <div className="organization-list" aria-label="Listado de organizaciones">
+              {visibleRows.map((organization, index) => {
+                const shownDirectors = isAdmin ? organization.directors : organization.directors.filter((director) => roleOptions.slice(0, 3).includes(director.role));
+                return <article className="organization-card" data-tone={index % 2} key={organization.id}>
+                  <div className="organization-card-heading">
+                    <div className="organization-card-title">
+                      <h3>{organization.name}</h3>
                       {isAdmin && <span className="organization-rut">{organization.rut ? `RUT ${organization.rut}` : 'RUT —'}</span>}
-                    </th>
-                    <td className="organization-directors-cell">{shownDirectors.length ? <button className="view-board-button" onClick={() => setDetailsRecord(organization)} aria-haspopup="dialog">
-                      Ver directiva <span>{shownDirectors.length} {shownDirectors.length === 1 ? 'integrante' : 'integrantes'}</span>
-                    </button> : <span className="table-empty">Directiva pendiente de actualizar.</span>}</td>
-                    {isAdmin && <><td className="validity-cell">{organization.valid_until ? displayDate(organization.valid_until) : '—'}</td>
-                      <td><span className={`status ${organization.status}`}>{organization.status === 'active' ? 'Activa' : 'Inactiva'}</span></td>
-                      <td><div className="row-actions"><button className="text-action" onClick={() => openEditor(organization)}>Editar</button><button className="text-action danger" onClick={() => void removeOrganization(organization)}>Eliminar</button></div></td>
-                    </>}
-                  </tr>;
-                })}</tbody>
-              </table>
+                    </div>
+                    <div className="organization-card-actions">
+                      <span className={`status ${organization.status}`}>{organization.status === 'active' ? 'Activa' : 'Inactiva'}</span>
+                      {isAdmin && <><button className="text-action" onClick={() => openEditor(organization)}>Editar</button>
+                        <button className="text-action danger" onClick={() => void removeOrganization(organization)}>Eliminar</button></>}
+                    </div>
+                  </div>
+                  <div className="organization-card-details">
+                    <section className="card-directors" aria-label={`Directiva de ${organization.name}`}>
+                      <h4>Directiva</h4>
+                      {shownDirectors.length ? <ul className="organization-directors">{shownDirectors.map((director, index) => <li key={director.id ?? `${director.role}-${index}`}>
+                        <h5>{director.name}</h5>
+                        <dl className="director-facts">
+                          <div><dt>Cargo</dt><dd>{director.role}</dd></div>
+                          <div><dt>Correo</dt><dd>{director.email ? <a href={`mailto:${director.email}`}>{director.email}</a> : 'Sin correo registrado'}</dd></div>
+                          {isAdmin && director.address && <div><dt>Domicilio</dt><dd>{director.address}</dd></div>}
+                          {isAdmin && director.phone && <div><dt>Teléfono</dt><dd>{director.phone}</dd></div>}
+                        </dl>
+                      </li>)}</ul> : <p className="table-empty">Directiva pendiente de actualizar.</p>}
+                    </section>
+                    {(organization.email || isAdmin) && <div className="organization-card-meta">
+                      <dl className="director-facts">
+                        <div><dt>Correo de contacto</dt><dd>{organization.email ? <a href={`mailto:${organization.email}`}>{organization.email}</a> : 'Sin correo registrado'}</dd></div>
+                        {isAdmin && <div><dt>Vigencia</dt><dd>{organization.valid_until ? displayDate(organization.valid_until) : 'Sin fecha registrada'}</dd></div>}
+                      </dl>
+                    </div>}
+                  </div>
+                </article>;
+              })}
             </div>}
           <p className="list-footnote">{isAdmin ? `${visibleRows.length} de ${organizations.length} organizaciones` : 'Oficina Municipal de la Juventud · Municipalidad de Caldera'}</p>
         </section>
       </main>
 
-      <footer className="footer"><span>REGISTRO COMUNAL DE ORGANIZACIONES JUVENILES</span><span>Municipalidad de Caldera</span></footer>
-
-      {detailsRecord && <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setDetailsRecord(null); }}>
-        <section className="dialog details-dialog" role="dialog" aria-modal="true" aria-labelledby="details-title">
-          <button className="close-button" onClick={() => setDetailsRecord(null)} aria-label="Cerrar detalle de directiva">×</button>
-          <h2 id="details-title">{detailsRecord.name}</h2>
-          <p className="details-intro">Directiva registrada{isAdmin ? ' · los datos personales son visibles solo para administración' : ''}</p>
-          {isAdmin && <p className="details-meta">{detailsRecord.rut ? `RUT ${detailsRecord.rut}` : 'RUT —'}<span>{detailsRecord.valid_until ? `Vigencia hasta ${displayDate(detailsRecord.valid_until)}` : 'Vigencia —'}</span></p>}
-          <ul className="director-detail-list">{(isAdmin ? detailsRecord.directors : detailsRecord.directors.filter((director) => roleOptions.slice(0, 3).includes(director.role))).map((director, index) => <li key={director.id ?? `${director.role}-${index}`}>
-            <div className="director-detail-main"><div><strong>{director.role}</strong><span>{director.name}</span></div>
-              {director.email ? <a href={`mailto:${director.email}`}>{director.email}</a> : <span className="detail-missing">Sin correo registrado</span>}
-            </div>
-            {isAdmin && (director.address || director.phone) && <div className="private-details">{director.address && <span>Domicilio: {director.address}</span>}{director.phone && <span>Teléfono: {director.phone}</span>}</div>}
-          </li>)}</ul>
-        </section>
-      </div>}
+      <footer className="footer"><span>Oficina Municipal de la Juventud y Diversidad · Municipalidad de Caldera</span></footer>
 
       {loginOpen && <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setLoginOpen(false); }}>
         <section className="dialog" role="dialog" aria-modal="true" aria-labelledby="login-title">
@@ -257,7 +277,7 @@ export default function App() {
               <label>Vigencia hasta<input name="validUntil" type="date" defaultValue={formRecord === 'new' ? '' : formRecord.valid_until?.slice(0, 10) ?? ''} /></label>
               <label>Correo de la organización<input name="email" type="email" maxLength={254} defaultValue={formRecord === 'new' ? '' : formRecord.email ?? ''} /></label>
               <label>Estado<select name="status" defaultValue={formRecord === 'new' ? 'active' : formRecord.status ?? 'active'}><option value="active">Activa</option><option value="inactive">Inactiva</option></select></label></div>
-            <div className="director-form-heading"><div><h3>Directiva</h3><p>Domicilio y teléfono son privados y solo los verá administración.</p></div><button type="button" className="text-action" onClick={() => setDirectors((rows) => [...rows, { ...emptyDirector(), role: 'Otro cargo' }])}>＋ Agregar integrante</button></div>
+            <div className="director-form-heading"><div><h3>Directiva</h3><p>Domicilio y teléfono son privados y solo los verá administración.</p></div><button type="button" className="text-action" disabled={directors.length >= 12} onClick={() => setDirectors((rows) => [...rows, { ...emptyDirector(), role: 'Otro cargo' }])}>{directors.length >= 12 ? 'Máximo 12 integrantes' : '＋ Agregar integrante'}</button></div>
             <div className="director-fields">{directors.map((director, index) => <fieldset className="director-field" key={director.id ?? `new-${index}`}>
               <div className="director-field-heading"><strong>Integrante {index + 1}</strong><button type="button" className="text-action danger" onClick={() => setDirectors((rows) => rows.filter((_, i) => i !== index))}>Quitar</button></div>
               <div className="form-grid"><label>Cargo<select value={director.role} onChange={(e) => updateDirector(index, 'role', e.target.value)}>{roleOptions.map((role) => <option key={role}>{role}</option>)}</select></label>

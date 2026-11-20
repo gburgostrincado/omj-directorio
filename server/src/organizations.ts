@@ -81,7 +81,7 @@ class OrganizationsService {
 
   async publicList() {
     const { rows } = await this.db.query(`
-      SELECT id, name, email FROM organizations WHERE status = 'active' ORDER BY name
+      SELECT id, name, email, status FROM organizations ORDER BY name
     `);
     if (!rows.length) return [];
     const members = await this.db.query(`
